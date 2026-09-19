@@ -72,6 +72,73 @@ function productNotFound(name, suggestions) {
   return error('PRODUCT_NOT_FOUND', "I couldn't find '" + name + "' in your stock.");
 }
 
+// ---------- Create a product ----------
+// Used when the shop owner adds stock for something we don't carry yet.
+// The unit is required: without it we would not know what the number means.
+async function createProduct(db, { name, unit, quantity, minimum = 0, source = 'typed' }) {
+  const cleanName = String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!cleanName) return error('MISSING_PRODUCT', 'Which product should I add?');
+  if (cleanName.length > 100) {
+    return error('INVALID_PRODUCT', "That product name is too long. Try a shorter one.");
+  }
+
+  const qty = Number(quantity);
+  if (!Number.isFinite(qty) || qty <= 0) {
+    return error('INVALID_QUANTITY', 'Quantity must be a number greater than zero.');
+  }
+
+  // No unit said: count it in pieces, which the owner can change later.
+  let stockUnit = 'pieces';
+  if (unit) {
+    stockUnit = normalizeUnit(unit);
+    if (!stockUnit) return error('UNKNOWN_UNIT', "I don't know the unit '" + unit + "'.");
+  }
+
+  const amount = round(qty);
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // ON DUPLICATE KEY covers the race where the same product is created twice
+    // at once; products.name is UNIQUE, so the second call just tops up instead.
+    await conn.query(
+      `INSERT INTO products (name, unit, current_quantity, minimum_quantity)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE current_quantity = current_quantity + VALUES(current_quantity)`,
+      [cleanName, stockUnit, amount, Number(minimum) || 0]
+    );
+
+    const [rows] = await conn.query('SELECT * FROM products WHERE name = ?', [cleanName]);
+    const p = rows[0];
+
+    await conn.query(
+      'INSERT INTO transactions (product_id, action, quantity, unit, source) VALUES (?, ?, ?, ?, ?)',
+      [p.id, 'ADD_STOCK', amount, p.unit, source]
+    );
+    await conn.commit();
+
+    return {
+      status: 'done',
+      created: true,
+      message:
+        'Added ' + cap(p.name) + ' to your stock: ' + p.current_quantity + ' ' + p.unit +
+        '. Say “set minimum for ' + p.name + '” later to get low-stock warnings.',
+      product: {
+        name: p.name,
+        unit: p.unit,
+        current_quantity: p.current_quantity,
+        minimum_quantity: p.minimum_quantity,
+        low_stock: p.current_quantity < p.minimum_quantity,
+      },
+    };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 // ---------- Add / Remove stock ----------
 // action: 'ADD_STOCK' or 'REMOVE_STOCK'
 // force: true means "yes, I confirm, continue anyway"
@@ -82,9 +149,30 @@ async function changeStock(db, { product, quantity, unit, action, force = false,
     return error('INVALID_QUANTITY', 'Quantity must be a number greater than zero.');
   }
 
-  // 2. Find the product
+  // 2. Find the product.
+  // Not stocked yet + the owner is adding? Offer to create it instead of failing.
   const found = await findProduct(db, product);
-  if (!found.product) return productNotFound(product, found.suggestions);
+  if (!found.product) {
+    // Removing something we don't have is still an error.
+    if (action !== 'ADD_STOCK') return productNotFound(product, found.suggestions);
+
+    // Close to an existing name: more likely a mis-hearing than a new product.
+    if (found.suggestions.length > 0 && !force) {
+      return productNotFound(product, found.suggestions);
+    }
+
+    if (!force) {
+      return {
+        status: 'needs_confirmation',
+        code: 'NEW_PRODUCT',
+        message:
+          "'" + product + "' is not in your stock yet. Add it as a new product with " +
+          qty + ' ' + (normalizeUnit(unit) || 'pieces') + '?',
+      };
+    }
+
+    return createProduct(db, { name: product, unit, quantity: qty, source });
+  }
   const stockUnit = normalizeUnit(found.product.unit) || found.product.unit;
 
   // 3. Check the unit. If none was said, use the product's own unit.
@@ -195,4 +283,11 @@ async function getHistory(db, limit = 20) {
   return rows;
 }
 
-module.exports = { changeStock, checkStock, getHistory, findProduct, normalizeUnit };
+module.exports = {
+  changeStock,
+  createProduct,
+  checkStock,
+  getHistory,
+  findProduct,
+  normalizeUnit,
+};

@@ -36,6 +36,9 @@ const FILLER = new Set([
   'of', 'the', 'a', 'an', 'in', 'to', 'from', 'stock', 'my', 'is', 'are', 'was', 'did',
   'please', 'kindly', 'and', 'for', 'some', 'any', 'undi', 'ki', 'ni', 'lo', 'nundi',
   'yokka', 'it', 'now', 'today', 'new', 'more', 'total', 'much', 'many',
+  // Without these, "add new product sugar 10 kg" would create a product
+  // literally called "product sugar".
+  'product', 'products', 'item', 'items', 'saruku', 'vastuvu',
 ]);
 
 function fail(code, message) {
