@@ -140,6 +140,7 @@ export default function VoicePanel({ speechLang, onChanged }) {
         >
           <span className="mic-ring" />
           <span className="mic-ring" />
+          <span className="mic-ring" />
           <span className="absolute size-44 rounded-full bg-brand-500/10 ring-1 ring-brand-500/10 sm:size-52" />
           <button
             type="button"

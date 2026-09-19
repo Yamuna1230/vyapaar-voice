@@ -39,6 +39,10 @@ function round(n) {
   return Math.round(n * 1000) / 1000;
 }
 
+function cap(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function error(code, message, extra = {}) {
   return { status: 'error', code, message, ...extra };
 }
@@ -145,8 +149,8 @@ async function changeStock(db, { product, quantity, unit, action, force = false,
     await conn.commit();
 
     const low = newQty < p.minimum_quantity;
-    message += ' ' + p.name + ' now: ' + newQty + ' ' + p.unit + '.';
-    if (low) message += ' ' + p.name + ' is below your minimum stock level.';
+    message += ' ' + cap(p.name) + ' now: ' + newQty + ' ' + p.unit + '.';
+    if (low) message += ' ' + cap(p.name) + ' is below your minimum stock level.';
 
     return {
       status: 'done',

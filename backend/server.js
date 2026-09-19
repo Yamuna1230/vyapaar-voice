@@ -1,7 +1,8 @@
 const express = require('express');
 const cors = require('cors');
-const { initDb } = require('./db');
+const { initDb, resetDemo } = require('./db');
 const inventory = require('./inventoryService');
+const { parseCommand } = require('./commandParser');
 
 async function main() {
   const db = await initDb();
@@ -43,6 +44,45 @@ async function main() {
       });
     }
   };
+
+  // Voice / typed command, e.g. "20 bags rice vachindi"
+  // Send "force": true (with the same text) after the user confirms a warning.
+  app.post('/api/command', safe(async (req) => {
+    const { text, force, source } = req.body;
+    const parsed = await parseCommand(db, text);
+    if (!parsed.ok) return parsed.error;
+
+    const { intent, product, quantity, unit } = parsed;
+
+    if (intent === 'CHECK_STOCK') {
+      const result = await inventory.checkStock(db, product);
+      if (result.status === 'done') {
+        const p = result.product;
+        const name = p.name.charAt(0).toUpperCase() + p.name.slice(1);
+        result.message = name + ': ' + p.current_quantity + ' ' + p.unit + ' in stock.';
+        if (p.low_stock) {
+          result.message += ' That is below your minimum of ' + p.minimum_quantity + ' ' + p.unit + '.';
+        }
+      }
+      return { ...result, intent };
+    }
+
+    const result = await inventory.changeStock(db, {
+      product,
+      quantity,
+      unit,
+      action: intent,
+      force: force === true,
+      source: source === 'voice' ? 'voice' : 'typed',
+    });
+    return { ...result, intent };
+  }));
+
+  // Put the demo stock and history back
+  app.post('/api/reset-demo', safe(async () => {
+    await resetDemo(db);
+    return { status: 'done', message: 'Demo data restored.' };
+  }));
 
   // Add stock
   app.post('/api/inventory/add', safe((req) => {

@@ -3,6 +3,68 @@ const mysql = require('mysql2/promise');
 
 const DB_NAME = process.env.DB_NAME || 'vyapaarvoice';
 
+// name, unit, current quantity, minimum quantity
+const DEMO_PRODUCTS = [
+  ['rice', 'bags', 45, 10],
+  ['oil', 'liters', 8, 10],
+  ['biscuits', 'boxes', 30, 15],
+];
+
+// product, action, quantity, time of day (today)
+const DEMO_ACTIVITY = [
+  ['oil', 'ADD_STOCK', 10, '10:05:00'],
+  ['biscuits', 'REMOVE_STOCK', 5, '12:40:00'],
+  ['rice', 'ADD_STOCK', 20, '15:15:00'],
+];
+
+// The shop's own words: spoken term, standard unit, standard product
+const DEMO_VOCABULARY = [
+  ['bastha', 'bags', null],
+  ['basta', 'bags', null],
+  ['bastalu', 'bags', null],
+  ['బస్తా', 'bags', null],
+  ['బస్తాలు', 'bags', null],
+  ['sack', 'bags', null],
+  ['sacks', 'bags', null],
+  ['dabba', 'boxes', null],
+  ['dabbalu', 'boxes', null],
+  ['డబ్బా', 'boxes', null],
+  ['డబ్బాలు', 'boxes', null],
+  ['nune', null, 'oil'],
+  ['నూనె', null, 'oil'],
+  ['biyyam', null, 'rice'],
+  ['biyam', null, 'rice'],
+  ['బియ్యం', null, 'rice'],
+  ['biscuitlu', null, 'biscuits'],
+  ['బిస్కెట్లు', null, 'biscuits'],
+  ['బిస్కెట్', null, 'biscuits'],
+];
+
+async function seedDemo(pool) {
+  await pool.query(
+    'INSERT INTO products (name, unit, current_quantity, minimum_quantity) VALUES ?',
+    [DEMO_PRODUCTS]
+  );
+  const [rows] = await pool.query('SELECT id, name, unit FROM products');
+  const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
+  for (const [name, action, quantity, time] of DEMO_ACTIVITY) {
+    const p = byName[name];
+    if (!p) continue;
+    await pool.query(
+      `INSERT INTO transactions (product_id, action, quantity, unit, source, created_at)
+       VALUES (?, ?, ?, ?, 'typed', TIMESTAMP(CURDATE(), ?))`,
+      [p.id, action, quantity, p.unit, time]
+    );
+  }
+}
+
+// Wipes stock + history and puts the demo data back (used by the "Reset demo" link)
+async function resetDemo(pool) {
+  await pool.query('DELETE FROM transactions');
+  await pool.query('DELETE FROM products');
+  await seedDemo(pool);
+}
+
 async function initDb() {
   // 1. Connect without choosing a database, so we can create it if needed
   const first = await mysql.createConnection({
@@ -59,20 +121,19 @@ async function initDb() {
     )
   `);
 
-  // 4. Add demo products only if the table is empty
-  const [rows] = await pool.query('SELECT COUNT(*) AS c FROM products');
-  if (rows[0].c === 0) {
+  // 4. Add demo data only if the tables are empty
+  const [products] = await pool.query('SELECT COUNT(*) AS c FROM products');
+  if (products[0].c === 0) await seedDemo(pool);
+
+  const [vocab] = await pool.query('SELECT COUNT(*) AS c FROM business_vocabulary');
+  if (vocab[0].c === 0) {
     await pool.query(
-      'INSERT INTO products (name, unit, current_quantity, minimum_quantity) VALUES ?',
-      [[
-        ['rice', 'bags', 25, 10],
-        ['oil', 'liters', 8, 10],
-        ['biscuits', 'boxes', 30, 15],
-      ]]
+      'INSERT INTO business_vocabulary (spoken_term, mapped_unit, mapped_product) VALUES ?',
+      [DEMO_VOCABULARY]
     );
   }
 
   return pool;
 }
 
-module.exports = { initDb };
+module.exports = { initDb, resetDemo };
